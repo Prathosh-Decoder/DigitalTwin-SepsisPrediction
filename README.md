@@ -9,6 +9,7 @@ utility-scoring rule).
 **Start here:**
 - [`docs/REPORT.md`](docs/REPORT.md) — full technical write-up: problem, related work, methodology, model, results
 - [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — how to load and use the trained model artifact in another system
+- [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) — alternative models/features tried after finalizing the production model, and why they weren't adopted
 - [`sepsis_pipeline/README.md`](sepsis_pipeline/README.md) — how to run/reproduce the training pipeline
 
 ## Repository structure

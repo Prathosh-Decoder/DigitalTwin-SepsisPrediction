@@ -228,6 +228,10 @@ AUROC (0.8420 → 0.8443) over that baseline, while changing only two of the thr
 Class imbalance (~1.8% positive rows) is handled implicitly through the asymmetric training
 target rather than an explicit class-weighting parameter, matching the winning team's approach.
 
+This configuration is the final, adopted model. Several further alternatives — an XGBoost/CatBoost
+ensemble, and replacing the rolling-statistics features with a lag-stacking approach — were tried
+afterward and did not improve on it; see [`EXPERIMENTS.md`](EXPERIMENTS.md) for the full record.
+
 ---
 
 ## 5. Results
