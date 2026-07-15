@@ -12,8 +12,8 @@ The model is trained on the PhysioNet/Computing in Cardiology (CinC) 2019 Sepsis
 (40,336 patients across two hospital systems), using an approach adapted from the challenge's
 top-ranked submission: a LightGBM regressor trained to directly optimize the competition's own
 time-dependent utility function, using 214 causally-constructed features per hourly observation.
-On a held-out test set, the model achieves an AUROC of 0.846, an AUPRC of 0.122, and a normalized
-utility score of 0.438 — exceeding the original competition winner's officially reported score of
+On a held-out test set, the model achieves an AUROC of 0.846, an AUPRC of 0.125, and a normalized
+utility score of 0.455 — exceeding the original competition winner's officially reported score of
 0.360, though under an easier evaluation condition (see §6, Limitations).
 
 ---
@@ -200,6 +200,15 @@ representation of both hospitals and outcome classes in every split. Training da
 validation data drives early stopping, the hyperparameter search, and threshold selection; the
 test set is touched exactly once, to produce the results in §5.
 
+The 8 patients used in the Project 1 digital twin's bed demo (p004880, p001072, p017091, p007057,
+p014527, p000295, p010756, p011623) are deliberately constrained to the test split. An initial
+80/10/10 assignment placed 6 of them in training and 1 in validation; those 7 were swapped with 7
+randomly chosen patients from the test split (preserving split sizes and hospital/class balance)
+so that any future live demonstration on these specific patients reflects genuine held-out
+performance, not memorized training data. The model was retrained from scratch on the corrected
+split, since relabeling a split file after training does not undo what a model has already learned
+from those rows.
+
 ### 4.2 Model and hyperparameters
 
 LightGBM was selected to mirror the winning team's model family, and for its native handling of
@@ -259,28 +268,28 @@ afterward and did not improve on it; see [`EXPERIMENTS.md`](EXPERIMENTS.md) for 
 
 | Split | AUROC | AUPRC | Precision | Recall | F1 | Lift@10% | Utility |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Train | 0.8816 | 0.1959 | 0.0747 | 0.7696 | 0.1362 | 6.076 | 0.4988 |
-| Validation | 0.8443 | 0.1346 | 0.0683 | 0.7097 | 0.1247 | 5.409 | 0.4354 |
-| **Test** | **0.8458** | **0.1224** | **0.0691** | **0.7049** | **0.1259** | **5.560** | **0.4382** |
-| Test — Hospital A | 0.8308 | 0.1179 | 0.0699 | 0.7344 | 0.1276 | 5.364 | 0.4567 |
-| Test — Hospital B | 0.8608 | 0.1427 | 0.0678 | 0.6576 | 0.1229 | 5.622 | 0.4075 |
+| Train | 0.8895 | 0.2095 | 0.0871 | 0.7374 | 0.1558 | 6.304 | 0.5207 |
+| Validation | 0.8444 | 0.1388 | 0.0765 | 0.6566 | 0.1371 | 5.418 | 0.4325 |
+| **Test** | **0.8465** | **0.1252** | **0.0800** | **0.6694** | **0.1429** | **5.674** | **0.4554** |
+| Test — Hospital A | 0.8321 | 0.1230 | 0.0822 | 0.7036 | 0.1472 | 5.659 | 0.4840 |
+| Test — Hospital B | 0.8615 | 0.1389 | 0.0762 | 0.6137 | 0.1356 | 5.762 | 0.4073 |
 
-At the test-set operating threshold: 1,961 true positives, 821 false negatives, 26,420 false
-positives, 126,831 true negatives. Validation and test scores sit close to each other and
+At the test-set operating threshold: 1,883 true positives, 930 false negatives, 21,653 false
+positives, 131,853 true negatives. Validation and test scores sit close to each other and
 noticeably below training scores, indicating the model is not substantially overfit.
 
 ### 5.3 What these values mean in practice
 
-- **AUROC 0.846** — ranks a random septic hour above a random non-septic hour ~85% of the time.
-- **AUPRC 0.122** — about 7x the ~0.018 no-skill baseline; low in absolute terms, but that's
+- **AUROC 0.847** — ranks a random septic hour above a random non-septic hour ~85% of the time.
+- **AUPRC 0.125** — about 7x the ~0.018 no-skill baseline; low in absolute terms, but that's
   expected given the class imbalance, not a sign of a weak model.
-- **Recall 0.705** — catches about 7 in 10 real sepsis-warning hours; the other 3 in 10 (821
-  hours) go unflagged.
-- **Precision 0.069** — of everything flagged, ~7% is a genuine warning hour; the rest are false
+- **Recall 0.669** — catches about 2 in 3 real sepsis-warning hours; the other third (930 hours)
+  go unflagged.
+- **Precision 0.080** — of everything flagged, ~8% is a genuine warning hour; the rest are false
   alarms, a direct consequence of how rare true positives are (~1.8% of rows).
-- **Lift@10% 5.56x** — the riskiest 10% of flagged hours contain ~5.6x more real cases than a
+- **Lift@10% 5.67x** — the riskiest 10% of flagged hours contain ~5.7x more real cases than a
   random 10% would, useful for prioritization even at low raw precision.
-- **Utility 0.438** — captures 43.8% of the maximum achievable timing-aware score (0 = never
+- **Utility 0.455** — captures 45.5% of the maximum achievable timing-aware score (0 = never
   flag, 1 = perfect foresight). For reference, the original challenge's winning team scored 0.360
   on the official hidden test set — not fully apples-to-apples, since their test set included a
   genuinely unseen third hospital and this project's does not (§6).

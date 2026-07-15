@@ -50,11 +50,13 @@ explainability artifacts. See [`docs/INTEGRATION.md`](docs/INTEGRATION.md) for h
 
 ## Headline results
 
-Held-out test set (patients never seen during training or hyperparameter selection):
+Held-out test set (patients never seen during training or hyperparameter selection — the split is
+also deliberately constructed so the 8 patients used in the Project 1 digital twin's bed demo are
+test-only, never trained on; see `docs/REPORT.md` §4.1):
 
 | AUROC | AUPRC | Precision | Recall | F1 | Lift@10% | Utility |
 |---:|---:|---:|---:|---:|---:|---:|
-| 0.846 | 0.122 | 0.069 | 0.705 | 0.126 | 5.56x | 0.438 |
+| 0.846 | 0.125 | 0.080 | 0.669 | 0.143 | 5.67x | 0.455 |
 
 Full results, per-hospital breakdown, and what each metric means: [`docs/REPORT.md`](docs/REPORT.md).
 

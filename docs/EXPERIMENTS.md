@@ -11,8 +11,15 @@ below are the full record.
 
 All experiments below reused the exact same train/val/test patient split, the exact same 214 (or
 explicitly noted otherwise) engineered features, and the exact same `U1 − U0` training target as
-the production model, so comparisons are apples-to-apples. None of them modified
-`artifacts/model_bundle.joblib` or any committed file.
+the production model, so comparisons within each experiment are apples-to-apples. None of them
+modified `artifacts/model_bundle.joblib` or any committed file.
+
+**Note on the split**: these experiments were run against the split in place at the time, before
+it was later adjusted so the 8 patients used in the Project 1 digital twin's bed demo are
+guaranteed test-only (see `REPORT.md` §4.1). The production model was retrained afterward on the
+corrected split, so its current numbers (in `REPORT.md` and `README.md`) differ slightly from the
+"production" baseline row shown in each table below — the *conclusions* (neither alternative beat
+production) are unaffected, since the swap only moved 7 of 40,336 patients.
 
 ## 1. XGBoost + CatBoost ensemble
 

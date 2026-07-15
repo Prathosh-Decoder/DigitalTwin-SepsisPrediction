@@ -59,7 +59,16 @@ def main():
         .rename("ever_septic")
         .reset_index()
     )
-    train_ids, val_ids, test_ids = split_patients(patient_table, config.RANDOM_SEED)
+    # Reuse an existing locked-in split if one is already saved (e.g. deliberately
+    # curated to keep specific patients test-only), otherwise compute a fresh one.
+    if config.TRAIN_IDS_PATH.exists() and config.VAL_IDS_PATH.exists() and config.TEST_IDS_PATH.exists():
+        train_ids = json.loads(config.TRAIN_IDS_PATH.read_text())
+        val_ids = json.loads(config.VAL_IDS_PATH.read_text())
+        test_ids = json.loads(config.TEST_IDS_PATH.read_text())
+        print(f"Reusing existing split from {config.ARTIFACTS_DIR} (delete those files to force a fresh split).")
+    else:
+        train_ids, val_ids, test_ids = split_patients(patient_table, config.RANDOM_SEED)
+
     assert set(train_ids) & set(val_ids) == set()
     assert set(train_ids) & set(test_ids) == set()
     assert set(val_ids) & set(test_ids) == set()
