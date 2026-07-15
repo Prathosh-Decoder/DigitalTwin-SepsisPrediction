@@ -9,6 +9,9 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 
+# Transient stdout captures from experiment runs (numbers are in results.json / docs)
+sepsis_pipeline/experiments/**/run.log
+
 # macOS / Office
 .DS_Store
 ~$*.docx
