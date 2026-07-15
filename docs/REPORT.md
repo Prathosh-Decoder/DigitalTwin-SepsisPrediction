@@ -185,7 +185,7 @@ predicting negative scores 0 and a perfectly-timed oracle scores 1.
 Path-signature features — the winning entry's headline technique — were deliberately excluded.
 The original ablation attributed only a modest +0.012 utility gain to them; the technique requires
 a heavy additional dependency (`iisignature`/`esig`); and signature terms are not clinically
-interpretable, which would undermine the SHAP-based explainability goals of this project (§5.3).
+interpretable, which would undermine the SHAP-based explainability goals of this project (§5.5).
 
 ---
 
@@ -238,15 +238,99 @@ afterward and did not improve on it; see [`EXPERIMENTS.md`](EXPERIMENTS.md) for 
 
 ### 5.1 Metric definitions
 
-- **AUROC** — probability the model ranks a random septic hour above a random non-septic hour; threshold-independent.
-- **AUPRC** — precision-recall area, more informative than AUROC under the ~1.8% positive-class imbalance present here.
-- **Precision** — of flagged hours, the fraction genuinely sepsis-warning.
-- **Recall** — of genuine sepsis-warning hours, the fraction correctly flagged.
-- **F1** — harmonic mean of precision and recall.
-- **Lift@10%** — concentration of true cases in the riskiest 10% of predictions versus a random 10%.
-- **Utility** — the official challenge's own time-aware scoring rule (§3.3); the metric the model is directly trained to optimize.
+- **AUROC** (Area Under the ROC Curve) — the probability that, given one randomly chosen
+  septic hour and one randomly chosen non-septic hour, the model assigns a higher risk score to
+  the septic one. It is computed by sweeping every possible decision threshold and plotting the
+  true-positive rate against the false-positive rate at each one; the area under that curve is
+  the metric. 0.5 means the model ranks no better than a coin flip; 1.0 means it ranks every
+  septic hour above every non-septic hour. Because it is computed over all thresholds, AUROC does
+  not depend on which single threshold is eventually chosen for a hard flag/no-flag decision.
+- **AUPRC** (Area Under the Precision-Recall Curve) — the same sweeping-over-thresholds idea as
+  AUROC, but plotting precision against recall instead of true/false-positive rate. It is more
+  informative than AUROC specifically because only ~1.8% of rows in this dataset are truly
+  positive: a model can score deceptively well on AUROC just by being good at the easy majority
+  (correctly ignoring obviously-healthy hours), while AUPRC exposes how good it really is at
+  finding the rare true cases. A random/no-skill model's AUPRC equals the positive rate itself
+  (~0.018 here), so AUPRC is best read relative to that baseline, not against 1.0.
+- **Precision** — of every hour the model flags as risky (at the chosen decision threshold), the
+  fraction that is a genuine sepsis-warning hour. Low precision means many false alarms per real
+  catch.
+- **Recall** — of every genuine sepsis-warning hour in the data, the fraction the model actually
+  flags. Low recall means many real cases go undetected (false negatives).
+- **F1** — the harmonic mean of precision and recall, a single number that penalizes models which
+  do well on one at the expense of the other.
+- **Lift@10%** — take the 10% of hours the model scores as riskiest; Lift@10% is how much more
+  concentrated true sepsis-warning hours are in that group compared to picking 10% at random. A
+  lift of 5x means those top-10%-riskiest hours contain five times more real cases than a random
+  10% would — a practical measure of how useful the ranking is for prioritizing limited clinical
+  attention, independent of any specific decision threshold.
+- **Utility** — the official PhysioNet/CinC 2019 challenge's own custom, time-aware scoring rule,
+  and the metric this model is directly trained to optimize (§3.2). Unlike the metrics above, it
+  is not a generic statistical measure — it explicitly rewards catching a case at the right time
+  and explicitly punishes catching it too late or missing it, which the other metrics cannot
+  express at all. Full calculation detail follows in §5.2.
 
-### 5.2 Performance
+### 5.2 How Utility is calculated
+
+Utility is computed in three steps.
+
+**Step 1 — score every hour against a timing curve, not a flat right/wrong.** For every hour of
+every patient, two hypothetical scores are computed from the *known* outcome (this is only
+possible retrospectively, using data whose true future is already known — see §3.2 for why the
+model itself never sees these numbers): `U1`, the credit earned if that hour had been flagged as
+risky, and `U0`, the credit earned if it had been left unflagged. For a patient who does develop
+sepsis at true onset time `t_sepsis`, with `dt = (this hour) − t_sepsis`:
+
+| Timing (`dt`) | Flagging this hour earns... | Staying silent earns... |
+|---|---|---|
+| More than 12h before onset, or more than 3h after | −0.05 (flat false-alarm cost) | 0 |
+| 12h to 6h before onset (ramp-up) | ramps linearly from 0 up to +1.0 | 0 |
+| 6h before onset to 3h after (decay) | ramps back down from +1.0 to 0 | ramps down from 0 to −2.0 |
+
+The reward for a correct flag peaks at exactly **6 hours before onset** — matching the horizon
+`SepsisLabel` itself is built around — and the penalty for staying silent only starts accruing
+*after* that point, worsening the closer the patient gets to actually crashing. For a patient who
+never develops sepsis at all, there is no timing curve: flagging always costs the flat −0.05 and
+staying silent always earns 0, at every hour of their stay.
+
+**Step 2 — grade the model's actual predictions against that curve.** At every hour, the model
+either flagged (predicted 1) or didn't (predicted 0). The score it actually earned for that hour
+is `U1` if it flagged, `U0` if it didn't. Summing this across every hour of every patient gives
+the cohort's *observed* total utility.
+
+**Step 3 — normalize against two reference points.** Two more totals are computed the same way:
+`U_inaction` (what the total would be if the model had predicted "no risk" for every single hour
+of every patient — the "do nothing" baseline) and `U_best` (what the total would be if every hour
+had received whichever of `U1`/`U0` was larger — an oracle with perfect foresight and perfect
+timing). The final reported Utility is:
+
+```
+Utility = (U_observed − U_inaction) / (U_best − U_inaction)
+```
+
+This normalization is what makes the number interpretable on a fixed scale regardless of dataset
+size or class balance: a model that never flags anything scores **0** (it earns exactly the
+inaction baseline), and a hypothetical perfect model scores **1**. A negative score means the
+model performed *worse* than doing nothing at all — entirely possible if it produces enough
+costly, badly-timed false alarms and missed cases.
+
+**Worked example.** For a patient whose true onset is hour 50, here is what a single correctly
+timed hour is worth at different points, and why timing so directly shapes the score:
+
+| Hour | Timing | Flag earns (`U1`) | Silent earns (`U0`) |
+|---:|---|---:|---:|
+| 44 | 6h early (peak reward) | **1.000** | 0.000 |
+| 47 | 3h early | 0.667 | −0.667 |
+| 50 | at onset | 0.333 | −1.333 |
+| 53 | 3h late (window closes) | 0.000 | −2.000 |
+
+Flagging at hour 44 is worth strictly more in isolation than flagging at hour 47 or later — but
+because rewards accumulate across *every* hour a model correctly flags (not just one), and the
+cost of staying silent keeps worsening the closer a patient gets to onset, the best achievable
+strategy is still to start flagging as early as the evidence supports and keep flagging, not to
+hold out for a single "best" hour.
+
+### 5.3 Performance
 
 | Split | AUROC | AUPRC | Precision | Recall | F1 | Lift@10% | Utility |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -260,7 +344,31 @@ At the test-set operating threshold: 1,961 true positives, 821 false negatives, 
 positives, 126,831 true negatives. Validation and test scores sit close to each other and
 noticeably below training scores, indicating the model is not substantially overfit.
 
-### 5.3 Explainability
+### 5.4 What these values mean in practice
+
+- **AUROC = 0.846**: given one random septic hour and one random non-septic hour, the model ranks
+  the septic one riskier about 85% of the time. Comfortably above the 0.5 (random) baseline, and
+  in a range broadly consistent with published results on this same task (§2).
+- **AUPRC = 0.122**: roughly **7x** the no-skill baseline for this data (~0.018, the true positive
+  rate) — meaningful ranking ability on the rare positive class, even though the absolute number
+  looks low next to AUROC. Low absolute AUPRC is expected and typical for a task this imbalanced,
+  not a sign of a broken model.
+- **Recall = 0.705**: the model catches roughly 7 out of every 10 real sepsis-warning hours in the
+  test set; the other 3 in 10 (821 hours) go unflagged.
+- **Precision = 0.069**: of everything flagged as risky, only about 7% is a genuine warning hour —
+  the other 93% are false alarms. This is a direct consequence of how rare true positives are in
+  the data (~1.8% of rows); even a strong ranking model produces many false alarms in absolute
+  terms when the positive class this small is the target.
+- **Lift@10% = 5.56x**: if a clinical team could only closely monitor the riskiest 10% of
+  patient-hours flagged, that group would contain about 5.6x more real sepsis cases than watching
+  a random 10% — useful for prioritization even though precision at the binary threshold is low.
+- **Utility = 0.438**: on the 0-to-1 scale described in §5.2 (0 = never flag anything, 1 = perfect
+  foresight), the model captures **43.8%** of the maximum achievable timing-aware score on the
+  test set. For reference, the original 2019 challenge's *winning* team scored 0.360 on the
+  official hidden test set — though that comparison isn't fully apples-to-apples, since their test
+  set included a genuinely unseen third hospital and this project's test set does not (§6).
+
+### 5.5 Explainability
 
 SHAP (TreeExplainer) values were computed on a stratified sample of 10,000 test-set rows (2,000
 positive, 8,000 negative). Plots are available at `sepsis_pipeline/artifacts/plots/`:
