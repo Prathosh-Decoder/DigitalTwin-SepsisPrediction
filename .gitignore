@@ -1,0 +1,19 @@
+# Regenerable derived caches (large; rebuild via 01_build_dataset.py / 02_feature_engineering.py)
+sepsis_pipeline/data_cache/
+
+# Unrelated Project 1 deliverable, not part of this repo
+project1-report.pdf
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# macOS / Office
+.DS_Store
+~$*.docx
+~$*.doc
+
+# Editors
+.vscode/
+.idea/
