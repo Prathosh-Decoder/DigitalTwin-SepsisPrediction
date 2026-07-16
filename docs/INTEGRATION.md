@@ -171,8 +171,9 @@ Notes for a robust integration:
 | `drivers` | list | Top-3 reasons in plain language (`{reason, direction}`), e.g. "lactate ↑". This is the "why" that makes a flag trustworthy. |
 | `raw_score`, `threshold` | float | The underlying model number and cutoff, for debugging/audit. |
 
-Read [`CRITICALITY.md`](CRITICALITY.md) before displaying any of these to a user — especially that
-criticality is a rank, not a probability, and the time-in-ICU caveat.
+Read the criticality section of [`REPORT.md`](REPORT.md#6-criticality--prioritization-layer) (§6)
+before displaying any of these to a user — especially that criticality is a rank, not a
+probability, and the time-in-ICU caveat.
 
 ---
 
@@ -231,4 +232,4 @@ python3 07_criticality.py          # fit + save the criticality layer
   `criticality` (ranking) + `trend` + `drivers` rather than the raw flag alone.
 
 Full model detail — features, the utility target, results — is in [`REPORT.md`](REPORT.md); the
-triage layer's math and caveats are in [`CRITICALITY.md`](CRITICALITY.md).
+triage layer's math and caveats are §6 of the same report.

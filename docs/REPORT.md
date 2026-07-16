@@ -14,7 +14,14 @@ top-ranked submission: a LightGBM regressor trained to directly optimize the com
 time-dependent utility function, using 214 causally-constructed features per hourly observation.
 On a held-out test set, the model achieves an AUROC of 0.846, an AUPRC of 0.125, and a normalized
 utility score of 0.455 — exceeding the original competition winner's officially reported score of
-0.360, though under an easier evaluation condition (see §6, Limitations).
+0.360, though under an easier evaluation condition (see §8, Limitations). A prioritization layer on
+top of the model (§6) converts its raw score into a 0–100 criticality rank, a calibrated
+probability, a tier, a trend, and plain-language drivers for bedside triage. A record of every
+alternative tried to improve the model — none of which beat it — is in §7.
+
+This is a single combined document: model report (§1–§5), triage layer (§6), experiment log (§7),
+limitations (§8), references (§9). For wiring the model into the Node.js digital twin, see the
+separate [`INTEGRATION.md`](INTEGRATION.md).
 
 ---
 
@@ -237,9 +244,8 @@ AUROC (0.8420 → 0.8443) over that baseline, while changing only two of the thr
 Class imbalance (~1.8% positive rows) is handled implicitly through the asymmetric training
 target rather than an explicit class-weighting parameter, matching the winning team's approach.
 
-This configuration is the final, adopted model. Several further alternatives — an XGBoost/CatBoost
-ensemble, and replacing the rolling-statistics features with a lag-stacking approach — were tried
-afterward and did not improve on it; see [`EXPERIMENTS.md`](EXPERIMENTS.md) for the full record.
+This configuration is the final, adopted model. Several further alternatives were tried afterward
+and did not improve on it; see §7 for the full record.
 
 ---
 
@@ -292,26 +298,220 @@ noticeably below training scores, indicating the model is not substantially over
 - **Utility 0.455** — captures 45.5% of the maximum achievable timing-aware score (0 = never
   flag, 1 = perfect foresight). For reference, the original challenge's winning team scored 0.360
   on the official hidden test set — not fully apples-to-apples, since their test set included a
-  genuinely unseen third hospital and this project's does not (§6).
+  genuinely unseen third hospital and this project's does not (§8).
 
 ### 5.4 Explainability
 
 SHAP (TreeExplainer) values were computed on a stratified sample of 10,000 test-set rows (2,000
 positive, 8,000 negative). Plots are available at `sepsis_pipeline/artifacts/plots/`:
 `roc_curve.png`, `pr_curve.png`, `threshold_sweep.png`, `shap_summary_beeswarm.png`, and
-`shap_importance_bar.png`.
+`shap_importance_bar.png`. These per-feature attributions also power the plain-language "why"
+in the criticality layer (§6).
 
 ---
 
-## 6. Limitations
+## 6. Criticality & Prioritization Layer
+
+A layer **on top of** the trained model that turns its raw score into a clinician-readable triage
+view — answering *"who do I look at first, and why."* It does **not** retrain or modify the model;
+it is a separate artifact (`artifacts/criticality_calibrator.joblib`) fitted by
+`sepsis_pipeline/07_criticality.py`, leaving the model bundle byte-for-byte unchanged.
+
+### 6.1 The four views
+
+For any patient-hour, the layer produces:
+
+1. **Criticality score (0–100)** — the headline triage number. It is the **percentile rank** of the
+   patient's raw model score against a reference distribution of all ICU-hours: a score of **94
+   means "riskier than 94% of ICU-hours,"** not "94% chance." It is a **relative risk rank, not a
+   probability.** Its only job is to spread patients into a readable 0–100 range so beds are easy
+   to order; it is monotonic with the raw score, so it never changes the ranking.
+2. **Calibrated probability (%)** — shown underneath the headline. This *is* an honest probability:
+   an isotonic-regression calibration (fit on the validation set) of the raw score into
+   *"of past hours that scored like this, X% went on to be in the pre-sepsis window."* Because
+   sepsis is rare (~1.8% of hours), even a genuinely high-risk hour calibrates to a **small-looking
+   number (e.g. 8–15%)** — that is correct, not "safe." This is exactly why the 0–100 criticality,
+   not the probability, is the headline.
+3. **Tier** — `LOW (<50) / MODERATE (50–75) / HIGH (75–90) / CRITICAL (≥90)`, from the criticality
+   score. Display defaults; validated (below) to line up with elevated calibrated risk.
+4. **Trend** — `rising / steady / falling`, the change in criticality over the last few hours
+   (causal — past hours only). A patient trending up fast is more urgent than one flat-high. Kept
+   as a separate arrow, not folded into the headline number.
+
+Plus the **top-3 SHAP drivers** in plain clinical language (e.g. "latest lactate ↑ · mean arterial
+pressure falling ↓"), so a flag is explainable rather than a black box.
+
+**Example output card**
+```
+p017091   CRITICALITY 99.9/100   [CRITICAL]   → steady
+          calibrated risk 45.6%   |   why: hours in ICU ↑ · latest temperature ↑ · peak temperature (6h) ↑
+```
+
+### 6.2 Validation ("does it make sense?")
+
+`07_criticality.py` checks and saves plots to `artifacts/plots/`:
+
+- **Septic vs non-septic**: mean criticality on pre-sepsis test hours **83.8** vs non-sepsis
+  **48.9** — strong, correct separation.
+- **Calibration reliability** (`calibration_reliability.png`): predicted vs observed sepsis rate
+  tracks the diagonal; **Brier score 0.0169** (low = well-calibrated).
+- **Trajectories** (`criticality_trajectories.png`): criticality climbs as septic patients approach
+  onset.
+- **8-bed triage table**: the demo beds ordered by criticality, each with prob / tier / trend /
+  drivers. The four known-septic demo beds rank top by calibrated risk.
+
+### 6.3 Layer-specific caveats
+
+- **Criticality (0–100) is a relative risk rank, not a probability.** "94" = riskier than 94% of
+  reference hours, not "94% chance."
+- **Calibrated probability is an empirical frequency on this dataset's two hospitals** — not a
+  clinically validated or prospectively tested probability. Small numbers are expected for a rare
+  event and do **not** mean "safe."
+- **Time-in-ICU effect**: the model leans on `ICULOS` (hours in ICU), so a snapshot taken at a
+  patient's *last* hour (as the 8-bed demo does) tends to score high across the board — "hours in
+  ICU ↑" often shows up as the top driver. This is real model behavior, not a bug; for a live
+  system, score the *current* hour and read the trend and the other drivers alongside it.
+
+The layer's code lives in `sepsis_pipeline/criticality.py` (`calibrated_probability`,
+`criticality_score`, `tier_from_score`, `criticality_trend`, `top_shap_drivers`) and
+`07_criticality.py`; `evaluate_model.ipynb` §12 renders the reliability curve + 8-bed triage cards.
+See [`INTEGRATION.md`](INTEGRATION.md) for producing a criticality score for a live patient-hour.
+
+---
+
+## 7. Alternatives Explored
+
+The final model (§4.2) was the best result found across **five independent experiment families**.
+None of the alternatives below beat it, so it was left unchanged; this section records what was
+tried and why, for future reference. Every experiment reused the exact same train/val/test split,
+the same 214 (unless noted) engineered features, and the same `U1 − U0` target, so comparisons
+within each experiment are apples-to-apples, and none modified the committed model. The
+substantial studies (§7.4–§7.6) are retained as reproducible scripts under
+[`../sepsis_pipeline/experiments/`](../sepsis_pipeline/experiments/) with their raw results.
+
+*Note on the split*: the first experiments (§7.1–§7.3) predate the split adjustment that pins the
+8 demo patients to test (§4.1), so their "production" baseline rows differ slightly from the
+current §5.2 numbers — the *conclusions* are unaffected, since the swap only moved 7 of 40,336
+patients.
+
+### 7.1 XGBoost + CatBoost ensemble
+
+Train XGBoost and CatBoost regressors on the identical target/features/split (same utility-gain
+trick, not ordinary classifiers), then average all three models' scores.
+
+| Model | AUROC | AUPRC | Precision | Recall | F1 | Lift@10% | Utility |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| LightGBM (production) | 0.8458 | 0.1224 | 0.0691 | **0.7049** | 0.1259 | 5.5605 | **0.4382** |
+| XGBoost (same target) | 0.8437 | 0.1248 | 0.0771 | 0.6542 | 0.1379 | 5.5605 | 0.4353 |
+| CatBoost (same target) | 0.8365 | 0.1304 | 0.0722 | 0.6467 | 0.1300 | 5.4167 | 0.4138 |
+| **Ensemble (mean of all 3)** | 0.8453 | 0.1299 | 0.0700 | 0.6912 | 0.1271 | **5.6180** | 0.4324 |
+
+**Conclusion**: XGBoost and CatBoost individually underperformed the tuned LightGBM on AUROC and
+Utility, so averaging them pulled the ensemble slightly below LightGBM alone on the two most
+important metrics. Not adopted.
+
+### 7.2 Lag-stacked features instead of rolling min/max/std (Team 2's approach)
+
+The #2-ranked team (Du, Sadr, de Chazal) stacked each hour's feature vector for the last 5 hours
+side-by-side instead of summarizing with rolling stats. This experiment replaced the 96 rolling
+mean/min/max/std features with 48 lag-stacked forward-filled values (`h-1`..`h-4`), keeping
+everything else. Net: 214 → 166 features.
+
+| Model | AUROC | AUPRC | Precision | Recall | F1 | Lift@10% | Utility |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Production (rolling min/max/std, 214 features) | 0.8458 | 0.1224 | 0.0691 | **0.7049** | 0.1259 | **5.5605** | **0.4382** |
+| Lag-stack h-1..h-4 (166 features) | **0.8461** | **0.1248** | **0.0780** | 0.6495 | **0.1393** | 5.5461 | 0.4334 |
+
+**Conclusion**: a precision/recall trade-off, not a strict improvement — AUROC/AUPRC/Precision/F1
+edge up with fewer features, but Recall and Utility (the two metrics prioritized here) drop. Not
+adopted.
+
+### 7.3 Reward/penalty and threshold sensitivity sweeps
+
+`evaluate_model.ipynb` (§5, §10, §11) explores how far the *existing, unchanged* model's results
+move under different false-alarm penalties, miss penalties, reward magnitudes, and decision
+thresholds — none retrain the model, only re-grade its scores. Key finding: the official published
+constants (`max_u_tp=1.0, min_u_fn=-2.0, u_fp=-0.05`) and the utility-optimal threshold already sit
+at a well-balanced point; no combination improved both Recall and Utility simultaneously without
+trading one for the other. This is expected — for a fixed model, both derive from the same
+threshold/scoring choice, so improving both together requires a genuinely better-discriminating
+model, which §7.1–§7.2 and §7.4 attempted without success.
+
+### 7.4 Broader hyperparameter search (Optuna) + nested cross-validation
+
+Script: [`../sepsis_pipeline/experiments/optuna_nested_cv.py`](../sepsis_pipeline/experiments/optuna_nested_cv.py)
+
+A broad **Optuna** Bayesian search (50 trials over ten LightGBM parameters, objective = validation
+AUPRC), then a **5-fold nested cross-validation** (patient-grouped, outcome-stratified outer folds;
+inner Optuna per fold) for an honest, generalization-robust estimate.
+
+| Model | AUROC | AUPRC | Recall | Utility |
+|---|---:|---:|---:|---:|
+| Production (single split) | **0.8465** | 0.1252 | 0.6694 | **0.4554** |
+| Optuna-best (single split) | 0.8452 | **0.1284** | **0.6783** | 0.4403 |
+| Nested CV (mean ± std) | 0.8381 ± 0.0114 | 0.1240 ± 0.0078 | 0.6523 ± 0.0374 | 0.4070 ± 0.0233 |
+
+**Conclusion**: Optuna did not beat production (only a marginally different precision/recall
+trade). The most valuable output is the **nested-CV estimate**: slightly below the single-split
+test figure, telling us the headline number is *mildly optimistic* and the trustworthy,
+generalization-robust performance is about **0.838 AUROC / 0.41 Utility** (±0.011 / ±0.023).
+Nothing adopted.
+
+### 7.5 Split-robustness: 10 groupings, demo patients pinned to test
+
+Script: [`../sepsis_pipeline/experiments/split_robustness.py`](../sepsis_pipeline/experiments/split_robustness.py)
+
+Keeping the 8 demo patients pinned to test (§4.1), re-shuffle all other patients into 10 different
+80/10/10 groupings and retrain the production-config model on each.
+
+| | AUROC | AUPRC | Recall | Utility |
+|---|---:|---:|---:|---:|
+| Mean over 10 groupings | 0.846 | 0.129 | 0.675 | 0.429 |
+| Range (min–max) | 0.829–0.859 | 0.116–0.148 | 0.626–0.727 | 0.403–0.449 |
+| Std | ±0.008 | ±0.010 | ±0.039 | ±0.013 |
+
+**Conclusion**: production sits almost exactly on the mean — a representative split, not a lucky
+one. The ±0.008 AUROC swing (0.829–0.859) is pure split noise (identical model config across all
+10), and the test "winners" are not the validation winners — the signature of noise, not of a
+better model. Cherry-picking the best grouping would report an inflated, non-reproducible number;
+the honest figure is the mean, where production already sits.
+
+### 7.6 Matched vs. random backfill of the demo-patient swap
+
+Script: [`../sepsis_pipeline/experiments/matched_replacement.py`](../sepsis_pipeline/experiments/matched_replacement.py)
+
+Pinning the 8 demo patients to test required moving 7 out of train/val, backfilled with *random*
+patients. This study instead backfilled with **clinically similar** patients (same hospital, same
+outcome, nearest-neighbor on a per-patient summary).
+
+| Backfill method | AUROC | AUPRC | Recall | Utility |
+|---|---:|---:|---:|---:|
+| Random (current production) | 0.8465 | 0.1252 | 0.6694 | **0.4554** |
+| Matched (clinical similarity) | **0.8469** | **0.1258** | 0.6606 | 0.4434 |
+
+**Conclusion**: statistically identical — swapping 7 of 32,268 training patients cannot move the
+model. Matched backfill is more *principled* but changes nothing (and would slightly soften the
+"genuinely held-out demo" property). Production (random backfill) kept.
+
+### 7.7 Overall
+
+AUROC stayed within roughly 0.829–0.859 across all five families, with a nested-CV honest estimate
+of ~0.838 — a real ceiling for this feature set that hyperparameter tuning and split juggling
+cannot break past. The consistency is itself a result: the reported performance is stable and
+trustworthy, not a lucky configuration. The only remaining lever likely to move the ceiling
+meaningfully is richer feature engineering, which was out of scope.
+
+---
+
+## 8. Limitations
 
 - **Retrospective data only.** No prospective or live-deployment validation has been performed.
 - **Test set is not a true generalization test.** It is a random 10% holdout from the same two
   training hospitals, not an unseen third hospital. The original challenge's central finding was
   that every top team's utility score collapsed on a genuinely unseen hospital — this model's test
   performance should be read as an upper bound on real-world cross-hospital generalization, not an
-  estimate of it.
-- **Low precision at the current operating point** (~7%): most flags are false alarms, typical for
+  estimate of it. The nested-CV honest estimate (~0.838 AUROC, §7.4) is the more trustworthy figure.
+- **Low precision at the current operating point** (~8%): most flags are false alarms, typical for
   this severely imbalanced task. The model is suited to prioritizing clinical attention, not
   standalone diagnosis.
 - **Not a clinical device.** A course/research project artifact; no care decision should depend on
@@ -319,7 +519,7 @@ positive, 8,000 negative). Plots are available at `sepsis_pipeline/artifacts/plo
 
 ---
 
-## References
+## 9. References
 
 [1] Morrill, J., Kormilitzin, A., Nevado-Holgado, A., Swaminathan, S., Howison, S., Lyons, T.
 "The Signature-Based Model for Early Detection of Sepsis From Electronic Health Records in the
