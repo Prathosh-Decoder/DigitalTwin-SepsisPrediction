@@ -1,161 +1,104 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ICU Digital Twin — Combined</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ICU Digital Twin</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="app-container">
-    <header class="header">
-      <div class="logo">
-        <h1>ICU Digital Twin</h1>
-        <p>Early Sepsis Warning Monitor</p>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">DT</span>
+      <div><h1>ICU Digital Twin</h1><p>Sepsis surveillance</p></div>
+    </div>
+    <div class="simulator" aria-label="Simulation controls">
+      <button id="restart" class="icon-button" title="Restart simulation" aria-label="Restart simulation">↻</button>
+      <button id="play" class="command-button">Pause</button>
+      <label for="speed">Speed</label>
+      <select id="speed">
+        <option value="2000">0.5×</option>
+        <option value="1000" selected>1×</option>
+        <option value="500">2×</option>
+      </select>
+      <div class="clock"><span>ICU hour</span><strong id="hour-label">24</strong></div>
+      <input id="hour" type="range" min="1" max="72" value="24" aria-label="ICU simulation hour">
+    </div>
+    <div id="service-status" class="service-status"><i></i><span>Connecting</span></div>
+  </header>
+
+  <main>
+    <section class="overview" aria-labelledby="overview-heading">
+      <div class="section-heading">
+        <div><p class="eyebrow">ICU NORTH · 8 BEDS</p><h2 id="overview-heading">Operational overview</h2></div>
+        <time id="updated-at">Waiting for data</time>
+      </div>
+      <div class="summary-grid">
+        <div class="summary active"><span>Active alerts</span><strong id="count-active">0</strong></div>
+        <div class="summary forecast"><span>6h forecast alerts</span><strong id="count-forecast">0</strong></div>
+        <div class="summary watch"><span>Under watch</span><strong id="count-watch">0</strong></div>
+        <div class="summary stable"><span>Stable</span><strong id="count-stable">0</strong></div>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <div class="ward-panel">
+        <div class="panel-heading"><h2>Patient census</h2><span id="ward-hour">Hour 24</span></div>
+        <div id="beds" class="beds" aria-live="polite"></div>
       </div>
 
-      <div class="simulation-controls glass-panel">
-        <div class="sim-display">
-          <span class="sim-label">Simulation Time</span>
-          <strong id="sim-hour">Hour 24</strong>
+      <aside id="detail" class="detail-panel" aria-live="polite">
+        <div id="detail-empty" class="detail-empty">
+          <strong>No patient selected</strong>
+          <span>Patient details will appear here.</span>
         </div>
-        <div class="sim-actions">
-          <button id="btn-restart" class="btn icon" title="Restart Simulation">↻</button>
-          <button id="btn-play" class="btn primary">Play</button>
-          <select id="speed" class="sim-select">
-            <option value="350">Very Fast (0.35s = 1hr)</option>
-            <option value="1000">Fast (1s = 1hr)</option>
-            <option value="3000" selected>Normal (3s = 1hr)</option>
-            <option value="5000">Slow (5s = 1hr)</option>
-          </select>
-        </div>
-        <input type="range" id="hour" class="sim-slider" min="1" max="72" value="24" title="Scrub hour">
-      </div>
-
-      <div class="status-indicator">
-        <span class="dot live"></span>
-        <span>Live Data</span>
-      </div>
-    </header>
-
-    <nav class="tabs" id="tabs">
-      <button class="tab active" data-tab="user" data-model="user">My Model</button>
-      <button class="tab" data-tab="tung" data-model="tung">Tung Model</button>
-      <button class="tab" data-tab="ensemble" data-model="ensemble">Ensemble</button>
-      <button class="tab" data-tab="compare">Head-to-Head</button>
-    </nav>
-
-    <!-- Tabs 1–3: ward view -->
-    <main class="main-content" id="ward-view">
-      <section class="ward-snapshot">
-        <h2 id="ward-title">Ward Snapshot</h2>
-        <div class="confusion-matrix-grid">
-          <div class="category-section">
-            <h3 class="category-title">True Positives<br><span class="subtitle">Sepsis, Predicted</span></h3>
-            <div class="beds-grid" id="beds-TP"></div>
-          </div>
-          <div class="category-section">
-            <h3 class="category-title">False Negatives<br><span class="subtitle">Sepsis, Not Predicted</span></h3>
-            <div class="beds-grid" id="beds-FN"></div>
-          </div>
-          <div class="category-section">
-            <h3 class="category-title">False Positives<br><span class="subtitle">No Sepsis, Predicted</span></h3>
-            <div class="beds-grid" id="beds-FP"></div>
-          </div>
-          <div class="category-section">
-            <h3 class="category-title">True Negatives<br><span class="subtitle">No Sepsis, Not Predicted</span></h3>
-            <div class="beds-grid" id="beds-TN"></div>
-          </div>
-        </div>
-      </section>
-
-      <section class="bed-detail glass-panel">
-        <div class="empty-state" id="detail-empty">
-          <h3>Select a bed</h3>
-          <p>Click on any bed in the ward snapshot to view detailed sepsis predictions and telemetry.</p>
-        </div>
-        <div class="detail-content hidden" id="detail-content">
-          <div class="detail-header">
-            <h2 id="d-pid">Patient</h2>
-            <span class="badge tier-badge" id="d-tier">Tier</span>
-          </div>
-          <div class="prediction-banner" id="d-banner">—</div>
-          <div class="metrics-grid">
-            <div class="metric-card">
-              <span class="metric-label">Criticality (0–100)</span>
-              <div class="metric-value crit-value">
-                <span id="d-crit">--</span>
-                <span class="trend-icon" id="d-trend">→</span>
-              </div>
-            </div>
-            <div class="metric-card">
-              <span class="metric-label" id="d-prob-label">Calibrated Risk</span>
-              <div class="metric-value" id="d-prob">--%</div>
-            </div>
-            <div class="metric-card">
-              <span class="metric-label">Alert Status</span>
-              <div class="metric-value alert-value" id="d-alert">--</div>
-            </div>
-            <div class="metric-card">
-              <span class="metric-label">Ground Truth</span>
-              <div class="metric-value truth-value" id="d-truth">--</div>
-            </div>
+        <div id="detail-content" hidden>
+          <div class="patient-heading">
+            <div><p id="detail-bed" class="eyebrow"></p><h2 id="detail-patient"></h2></div>
+            <span id="detail-state" class="state-pill"></span>
           </div>
 
-          <div class="drivers-section">
-            <h3>Key Risk Drivers (Top 5)</h3>
-            <div class="driver-category">
-              <h4>Vitals &amp; Labs</h4>
-              <ul class="drivers-list" id="drv-vitals"></ul>
-            </div>
-            <div class="driver-category">
-              <h4>Demographics</h4>
-              <ul class="drivers-list" id="drv-demo"></ul>
-            </div>
-            <div class="driver-category">
-              <h4>Others</h4>
-              <ul class="drivers-list" id="drv-others"></ul>
-            </div>
+          <div class="model-grid">
+            <section class="model-readout forecast-readout">
+              <div class="readout-heading"><span>6-hour forecast</span><small>Tung calibrated XGBoost</small></div>
+              <div class="probability-line"><strong id="forecast-prob">--</strong><span id="forecast-trend">--</span></div>
+              <div class="threshold-track"><i id="forecast-fill"></i><b id="forecast-threshold"></b></div>
+              <p id="forecast-status"></p>
+            </section>
+            <section class="model-readout active-readout">
+              <div class="readout-heading"><span>Active alert</span><small>Prathosh LightGBM</small></div>
+              <div class="probability-line"><strong id="active-prob">--</strong><span id="active-tier">--</span></div>
+              <div class="criticality-line"><span>Criticality percentile</span><b id="active-criticality">--</b></div>
+              <p id="active-status"></p>
+            </section>
           </div>
-        </div>
-      </section>
-    </main>
 
-    <!-- Tab 4: head-to-head -->
-    <main class="compare-view hidden" id="compare-view">
-      <div class="compare-controls glass-panel">
-        <button class="btn primary" id="pick-septic">🎲 Random Sepsis Patient</button>
-        <button class="btn" id="pick-any">🎲 Random Patient</button>
-        <div class="cmp-id">Patient <strong id="cmp-pid">—</strong><span class="badge" id="cmp-cat"></span></div>
-        <div class="cmp-hour-wrap">
-          <span class="sim-label">Hour <strong id="cmp-hour-label">—</strong> / <span id="cmp-hour-max">—</span></span>
-          <input type="range" id="cmp-hour" class="sim-slider wide" min="1" max="72" value="1">
-        </div>
-      </div>
+          <section class="detail-section chart-section">
+            <div class="subheading"><h3>Forecast trajectory</h3><span>Next-6h probability by ICU hour</span></div>
+            <div id="trajectory" class="trajectory"></div>
+          </section>
 
-      <section class="compare-grid">
-        <div class="chart-card glass-panel">
-          <div class="chart-head">
-            <h3>Predicted Sepsis Risk over ICU Stay</h3>
-            <div class="legend">
-              <span class="lg"><i class="sw" style="background:var(--series-user)"></i>My model</span>
-              <span class="lg"><i class="sw" style="background:var(--series-tung)"></i>Tung</span>
-              <span class="lg"><i class="sw onset"></i>true onset</span>
-            </div>
-          </div>
-          <div id="chart"></div>
-          <p class="chart-foot" id="chart-foot"></p>
+          <section class="detail-section narrative-section">
+            <div class="narrative-label"><span>AI observation</span><small id="narrative-source"></small></div>
+            <p id="observation"></p>
+            <div class="recommendation"><strong>Recommendation</strong><p id="recommendation"></p></div>
+          </section>
+
+          <section class="detail-section">
+            <div class="subheading"><h3>Forecast drivers</h3><span>Local SHAP contribution</span></div>
+            <div id="drivers" class="drivers"></div>
+          </section>
+
+          <section class="detail-section">
+            <div class="subheading"><h3>Latest measurements</h3><span id="measurement-hour"></span></div>
+            <div id="vitals" class="vitals-table"></div>
+          </section>
         </div>
-        <div class="readouts">
-          <div class="readout glass-panel" id="ro-user"><h4>My Model</h4><b id="ro-user-prob">—</b><span id="ro-user-alarm" class="pred-pill">—</span></div>
-          <div class="readout glass-panel" id="ro-tung"><h4>Tung Model</h4><b id="ro-tung-prob">—</b><span id="ro-tung-alarm" class="pred-pill">—</span></div>
-          <div class="readout glass-panel" id="ro-ens"><h4>Ensemble</h4><b id="ro-ens-prob">—</b><span id="ro-ens-alarm" class="pred-pill">—</span></div>
-          <div class="readout glass-panel truth" id="ro-truth"><h4>Ground Truth</h4><b id="ro-truth-state">—</b><span id="ro-truth-onset" class="pred-pill">—</span></div>
-        </div>
-      </section>
-    </main>
-  </div>
+      </aside>
+    </section>
+  </main>
+
+  <footer>Research prototype · Model outputs support review and do not replace clinical judgment.</footer>
   <script src="script.js"></script>
 </body>
 </html>

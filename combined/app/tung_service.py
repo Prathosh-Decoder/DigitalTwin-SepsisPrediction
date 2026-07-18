@@ -12,6 +12,7 @@ Endpoints:
 
 Port 8711 (5000 = macOS AirPlay, 5001 may be the original app).
 """
+import os
 import sys
 import warnings
 from pathlib import Path
@@ -22,8 +23,8 @@ from flask import Flask, jsonify, request
 warnings.filterwarnings("ignore")
 
 ROOT = Path(__file__).resolve().parents[2]
-DATA_A = ROOT / "training_setA" / "training_setA"
-DATA_B = ROOT / "training_setB" / "training_setB"
+DATA_A = Path(os.environ.get("SEPSIS_DATA_A", ROOT / "training_setA" / "training_setA")).expanduser()
+DATA_B = Path(os.environ.get("SEPSIS_DATA_B", ROOT / "training_setB" / "training_setB")).expanduser()
 sys.path.insert(0, str(ROOT / "combined"))
 from tung_predictor import TungModel  # noqa: E402
 
@@ -33,10 +34,17 @@ MODEL = TungModel()
 _SUFFIX = {
     "_ffill": "latest {}", "_missing": "{} not measured", "_since_measured": "hrs since {} drawn",
 }
+_PLAIN = {
+    "ICULOS": "hours in ICU",
+    "Age": "age",
+    "hospital_to_icu_lag_hours": "time from hospital admission to ICU",
+}
 
 
 def pretty(name: str) -> str:
     """Light cleanup of Tung's literature_core feature names for display."""
+    if name in _PLAIN:
+        return _PLAIN[name]
     for suf, tmpl in _SUFFIX.items():
         if name.endswith(suf):
             return tmpl.format(name[: -len(suf)].replace("_", " "))
@@ -74,15 +82,23 @@ def score(pid):
                         "iculos": None, "is_discharged": is_discharged, "drivers": []})
     if want_drivers:
         prob, raw, thr, alarm, drivers = MODEL.explain_row(df, k=5)
-        drivers = [{"label": pretty(d["feature"]), "value": d["value"], "direction": d["direction"]}
+        recent_probabilities = []
+        drivers = [{"label": pretty(d["feature"]), "feature": d["feature"],
+                    "value": d["value"], "direction": "up" if d["shap"] > 0 else "down",
+                    "shap": round(float(d["shap"]), 6), "impact": round(abs(float(d["shap"])), 6)}
                    for d in drivers]
     else:
-        row = MODEL.trajectory(df).iloc[-1]
+        trajectory_frame = MODEL.trajectory(df)
+        row = trajectory_frame.iloc[-1]
         prob, raw, alarm, drivers = float(row["tung_prob"]), float(row["tung_raw"]), bool(row["alarm"]), []
+        thr = float(row["threshold"])
+        recent_probabilities = [round(float(value), 5) for value in trajectory_frame["tung_prob"].tail(4)]
     return jsonify({
         "id": pid, "tung_prob": round(prob, 5), "tung_raw": round(raw, 5),
-        "alarm": bool(alarm), "iculos": float(df["ICULOS"].iloc[-1]) if "ICULOS" in df else float(len(df)),
+        "alarm": bool(alarm), "threshold": round(float(thr), 5),
+        "iculos": float(df["ICULOS"].iloc[-1]) if "ICULOS" in df else float(len(df)),
         "is_discharged": is_discharged, "drivers": drivers,
+        "recent_probabilities": recent_probabilities,
     })
 
 
@@ -94,6 +110,7 @@ def trajectory(pid):
         "id": pid,
         "iculos": traj["ICULOS"].astype(float).tolist(),
         "tung_prob": [round(float(p), 5) for p in traj["tung_prob"]],
+        "thresholds": [round(float(p), 5) for p in traj["threshold"]],
     })
 
 
