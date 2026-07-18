@@ -1,230 +1,220 @@
-"use strict";
 const $ = (id) => document.getElementById(id);
-const CATS = ["TP", "FN", "FP", "TN"];
-const WARD_TITLES = {
-  user: "Ward Snapshot — My Model",
-  tung: "Ward Snapshot — Tung Model",
-  ensemble: "Ward Snapshot — Ensemble (50/50 blend)",
-};
-let state = { model: "user", hour: 24, selected: null, playing: false, timer: null, speed: 3000, cmp: null };
+const state = { hour: 24, selected: null, playing: true, timer: null, speed: 1000, request: 0, loading: false };
+const order = { ACTIVE: 0, FORECAST: 1, WATCH: 2, STABLE: 3 };
 
-// ---------- init ----------
-fetch("/api/config").then(r => r.json()).then(cfg => {
-  state.cfg = cfg;
-  document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => switchTab(t)));
-  $("hour").addEventListener("input", e => { setHour(+e.target.value); });
-  $("btn-play").addEventListener("click", togglePlay);
-  $("btn-restart").addEventListener("click", restart);
-  $("speed").addEventListener("change", e => { state.speed = +e.target.value; if (state.playing) { stopPlay(); startPlay(); } });
-  $("cmp-hour").addEventListener("input", e => renderCompareAt(+e.target.value));
-  $("pick-septic").addEventListener("click", () => loadRandom(true));
-  $("pick-any").addEventListener("click", () => loadRandom(false));
-  updateHourDisplay();
-  loadWard();
-});
-
-function setHour(h) {
-  state.hour = h;
-  $("hour").value = h;
-  updateHourDisplay();
-  loadWard();
-  if (state.selected) loadDetail(state.selected);
+function percent(value) {
+  return value == null ? "--" : `${(value * 100).toFixed(1)}%`;
 }
-function updateHourDisplay() { $("sim-hour").textContent = "Hour " + state.hour; }
 
-function switchTab(tab) {
-  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-  tab.classList.add("active");
-  const which = tab.dataset.tab;
-  stopPlay();
-  if (which === "compare") {
-    $("ward-view").classList.add("hidden");
-    $("compare-view").classList.remove("hidden");
-    if (!state.cmp) loadRandom(true);
-  } else {
-    $("compare-view").classList.add("hidden");
-    $("ward-view").classList.remove("hidden");
-    state.model = tab.dataset.model;
-    $("ward-title").textContent = WARD_TITLES[state.model];
-    loadWard();
-    if (state.selected) loadDetail(state.selected);
+function valueText(item) {
+  if (item.value == null) return "--";
+  const digits = ["HR", "MAP", "O2Sat", "Resp"].includes(item.key) ? 0 : 1;
+  return `${item.value.toFixed(digits)} ${item.unit}`;
+}
+
+function trendText(trend) {
+  return { rising: "↑ Rising", falling: "↓ Falling", steady: "→ Steady" }[trend] || "--";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>'"]/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
+  })[char]);
+}
+
+async function getJSON(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return response.json();
+}
+
+function setConnection(ok, label) {
+  $("service-status").classList.toggle("degraded", !ok);
+  $("service-status").querySelector("span").textContent = label;
+}
+
+async function checkHealth() {
+  try {
+    const health = await getJSON("/api/health");
+    setConnection(health.status === "ok", health.status === "ok" ? "Models online" : "Forecast unavailable");
+  } catch (_) {
+    setConnection(false, "API offline");
   }
 }
 
-// ---------- ward (tabs 1–3) ----------
-function loadWard() {
-  fetch(`/api/beds?model=${state.model}&hour=${state.hour}`).then(r => r.json()).then(beds => {
-    CATS.forEach(c => $("beds-" + c).innerHTML = "");
-    beds.forEach(b => $("beds-" + b.category).appendChild(bedCard(b)));
-  });
+function renderBed(patient) {
+  const selected = state.selected === patient.id ? " selected" : "";
+  const vitals = Object.fromEntries(patient.vitals.map((item) => [item.key, item]));
+  const active = patient.active_alert.alert ? "ALERT" : "Clear";
+  const forecast = patient.forecast.alert ? "ALERT" : percent(patient.forecast.probability);
+  return `<button class="bed state-${patient.state.toLowerCase()}${selected}" data-pid="${patient.id}">
+    <span class="bed-top"><b>${escapeHtml(patient.bed)}</b><i>${patient.state}</i></span>
+    <span class="patient-id">Patient ${String(patient.id).padStart(6, "0")}</span>
+    <span class="bed-models">
+      <span><small>Active</small><strong>${active}</strong></span>
+      <span><small>6h forecast</small><strong>${forecast}</strong></span>
+    </span>
+    <span class="mini-vitals">
+      <span><small>HR</small>${vitals.HR ? valueText(vitals.HR).split(" ")[0] : "--"}</span>
+      <span><small>MAP</small>${vitals.MAP ? valueText(vitals.MAP).split(" ")[0] : "--"}</span>
+      <span><small>SpO2</small>${vitals.O2Sat ? valueText(vitals.O2Sat).split(" ")[0] : "--"}</span>
+    </span>
+  </button>`;
 }
 
-function bedCard(b) {
-  const el = document.createElement("div");
-  const tier = b.tier || "LOW";
-  el.className = "bed-card" + (b.is_discharged ? " discharged" : "") + (state.selected === b.id ? " active" : "");
-  const crit = (b.criticality == null) ? "—" : b.criticality;
-  const trendCls = b.trend || "steady";
-  const trendSym = b.trend === "rising" ? "▲" : b.trend === "falling" ? "▼" : "→";
-  const pred = b.is_risky
-    ? `<div class="bed-prediction pred-sepsis">PREDICTS SEPSIS</div>`
-    : `<div class="bed-prediction pred-safe">NO SEPSIS RISK</div>`;
-  el.innerHTML = `
-    <div class="bed-header"><span class="bed-id">Bed ${b.id}</span><span class="trend ${trendCls}">${trendSym}</span></div>
-    ${pred}
-    <div class="bed-crit tier-${tier}">${crit}<small>/100</small></div>
-    <div class="tier-label tier-${tier}">${b.tung_unavailable ? "TUNG OFFLINE" : tier}</div>`;
-  el.addEventListener("click", () => {
-    state.selected = b.id;
-    document.querySelectorAll(".bed-card").forEach(x => x.classList.remove("active"));
-    el.classList.add("active");
-    loadDetail(b.id);
-  });
-  return el;
+async function loadWard() {
+  if (state.loading) return;
+  state.loading = true;
+  const requestId = ++state.request;
+  try {
+    const payload = await getJSON(`/api/twin/beds?hour=${state.hour}`);
+    if (requestId !== state.request) return;
+    for (const key of ["ACTIVE", "FORECAST", "WATCH", "STABLE"]) {
+      $(`count-${key.toLowerCase()}`).textContent = payload.counts[key] || 0;
+    }
+    $("beds").innerHTML = payload.patients.sort((a, b) => order[a.state] - order[b.state]).map(renderBed).join("");
+    document.querySelectorAll(".bed").forEach((button) => button.addEventListener("click", () => selectPatient(+button.dataset.pid)));
+    $("updated-at").textContent = `Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+    setConnection(payload.patients.some((p) => p.forecast.available), "Models online");
+    if (state.selected) await loadDetail(state.selected);
+  } catch (error) {
+    $("beds").innerHTML = `<div class="error-state"><strong>Patient stream unavailable</strong><span>${escapeHtml(error.message)}</span></div>`;
+    setConnection(false, "API offline");
+  } finally {
+    state.loading = false;
+  }
 }
 
-function loadDetail(pid) {
-  fetch(`/api/beds/${pid}?model=${state.model}&hour=${state.hour}`).then(r => r.json()).then(d => {
-    $("detail-empty").classList.add("hidden");
-    $("detail-content").classList.remove("hidden");
-    $("d-pid").textContent = "Bed " + d.id + (d.category ? "  ·  " + d.category : "");
-    const tier = d.tier || "—";
-    $("d-tier").textContent = tier;
-    $("d-tier").className = "badge tier-badge tier-" + tier;
-
-    const banner = $("d-banner");
-    banner.textContent = d.is_risky ? "PREDICTS SEPSIS" : "NO SEPSIS RISK";
-    banner.className = "prediction-banner " + (d.is_risky ? "pred-sepsis" : "pred-safe");
-
-    $("d-crit").textContent = d.criticality == null ? "—" : d.criticality;
-    const tr = $("d-trend");
-    tr.className = "trend-icon trend " + (d.trend || "steady");
-    tr.textContent = d.trend === "rising" ? "▲" : d.trend === "falling" ? "▼" : "→";
-    $("d-prob-label").textContent = state.model === "user" ? "Calibrated Risk" : "Risk Probability";
-    $("d-prob").textContent = d.probability == null ? "—" : d.probability + "%";
-    $("d-alert").innerHTML = d.is_risky
-      ? `<span class="tier-CRITICAL">● ALARM</span>`
-      : `<span class="tier-LOW">○ Clear</span>`;
-    $("d-truth").innerHTML = d.sepsis_now
-      ? `<span class="tier-CRITICAL">SEPSIS</span>`
-      : (d.true_onset_hour ? `Onset h${d.true_onset_hour}` : `<span class="tier-LOW">None</span>`);
-
-    renderDrivers("drv-vitals", (d.drivers || {}).vitals_labs);
-    renderDrivers("drv-demo", (d.drivers || {}).demographics);
-    renderDrivers("drv-others", (d.drivers || {}).others);
-  });
+function selectPatient(patientId) {
+  state.selected = patientId;
+  document.querySelectorAll(".bed").forEach((bed) => bed.classList.toggle("selected", +bed.dataset.pid === patientId));
+  loadDetail(patientId);
 }
 
-function renderDrivers(elId, list) {
-  const ul = $(elId);
-  ul.innerHTML = "";
-  if (!list || !list.length) {
-    ul.innerHTML = `<li class="empty-driver">None</li>`;
+function setModelReadouts(patient) {
+  const forecast = patient.forecast;
+  const active = patient.active_alert;
+  $("forecast-prob").textContent = percent(forecast.probability);
+  $("forecast-trend").textContent = trendText(forecast.trend);
+  $("forecast-fill").style.width = `${Math.min(100, (forecast.probability || 0) * 100)}%`;
+  $("forecast-threshold").style.left = `${Math.min(100, (forecast.threshold || 0) * 100)}%`;
+  $("forecast-threshold").title = `Alert threshold ${percent(forecast.threshold)}`;
+  $("forecast-status").textContent = forecast.available ? (forecast.alert ? "Forecast threshold crossed" : `Below ${percent(forecast.threshold)} threshold`) : "Forecast service unavailable";
+  $("forecast-status").className = forecast.alert ? "alert-text" : "clear-text";
+
+  $("active-prob").textContent = percent(active.probability);
+  $("active-tier").textContent = `${active.tier} · ${trendText(active.trend)}`;
+  $("active-criticality").textContent = active.criticality == null ? "--" : `${active.criticality.toFixed(1)} / 100`;
+  $("active-status").textContent = active.alert ? "Active alert raised" : "No active alert";
+  $("active-status").className = active.alert ? "alert-text" : "clear-text";
+}
+
+function drawTrajectory(trajectory) {
+  const values = trajectory?.probabilities || [];
+  const hours = trajectory?.hours || [];
+  const thresholds = trajectory?.thresholds || [];
+  if (!values.length) {
+    $("trajectory").innerHTML = `<span class="no-data">No trajectory available</span>`;
     return;
   }
-  list.forEach(dr => {
-    const li = document.createElement("li");
-    li.className = dr.direction === "↑" ? "up" : "down";
-    const val = dr.value == null ? "" : ` (${dr.value})`;
-    li.innerHTML = `<span>${dr.label}${val} ${dr.direction}</span>` +
-      (dr.source ? `<span class="drv-src ${dr.source}">${dr.source}</span>` : "");
-    ul.appendChild(li);
-  });
+  const width = 680, height = 180, left = 40, right = 12, top = 12, bottom = 28;
+  const innerW = width - left - right, innerH = height - top - bottom;
+  const maxY = Math.max(0.1, ...values, ...thresholds) * 1.12;
+  const x = (i) => left + (values.length === 1 ? 0 : (i / (values.length - 1)) * innerW);
+  const y = (v) => top + innerH - (v / maxY) * innerH;
+  const line = values.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const threshold = thresholds.length ? thresholds.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ") : "";
+  const area = `${line} L${x(values.length - 1)},${top + innerH} L${left},${top + innerH} Z`;
+  const ticks = [0, 0.5, 1].map((fraction) => {
+    const value = maxY * fraction;
+    const py = y(value);
+    return `<line x1="${left}" y1="${py}" x2="${width - right}" y2="${py}" class="gridline"/><text x="${left - 7}" y="${py + 4}" class="axis-label" text-anchor="end">${(value * 100).toFixed(0)}%</text>`;
+  }).join("");
+  $("trajectory").innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Six-hour sepsis forecast trajectory">
+    ${ticks}<path d="${area}" class="chart-area"/><path d="${line}" class="chart-line"/>
+    ${threshold ? `<path d="${threshold}" class="threshold-line"/>` : ""}
+    <circle cx="${x(values.length - 1)}" cy="${y(values.at(-1))}" r="4" class="chart-point"/>
+    <text x="${left}" y="${height - 6}" class="axis-label">Hour ${hours[0]}</text>
+    <text x="${width - right}" y="${height - 6}" class="axis-label" text-anchor="end">Hour ${hours.at(-1)}</text>
+  </svg>`;
 }
 
-// ---------- simulation ----------
-function togglePlay() { state.playing ? stopPlay() : startPlay(); }
-function startPlay() {
-  state.playing = true;
-  $("btn-play").textContent = "Pause";
-  state.timer = setInterval(() => {
-    if (state.hour >= 72) { stopPlay(); return; }
-    setHour(state.hour + 1);
-  }, state.speed);
-}
-function stopPlay() {
-  state.playing = false;
-  $("btn-play").textContent = "Play";
-  if (state.timer) clearInterval(state.timer);
-}
-function restart() { stopPlay(); setHour(1); startPlay(); }
-
-// ---------- head-to-head (tab 4) ----------
-function loadRandom(septic) {
-  fetch(`/api/compare_random?septic=${septic ? 1 : 0}`).then(r => r.json()).then(p => {
-    state.cmp = p;
-    $("cmp-pid").textContent = "#" + p.id;
-    $("cmp-cat").textContent = p.category || "test set";
-    $("cmp-hour-max").textContent = p.max_hour;
-    const sl = $("cmp-hour"); sl.max = p.max_hour; sl.value = p.hour;
-    renderCompareAt(p.hour);
-  });
+function renderDrivers(drivers) {
+  if (!drivers?.length) {
+    $("drivers").innerHTML = `<span class="no-data">No SHAP explanation available</span>`;
+    return;
+  }
+  const max = Math.max(...drivers.map((driver) => driver.impact || 0), 0.000001);
+  $("drivers").innerHTML = drivers.map((driver) => {
+    const width = Math.max(4, ((driver.impact || 0) / max) * 100);
+    const direction = driver.direction === "up" ? "Raises forecast" : "Lowers forecast";
+    const featureValue = driver.value == null ? "missing" : Number(driver.value).toFixed(2);
+    return `<div class="driver ${driver.direction}">
+      <div><span>${escapeHtml(driver.label)}</span><small>${direction} · value ${featureValue}</small></div>
+      <div class="driver-track"><i style="width:${width}%"></i></div>
+    </div>`;
+  }).join("");
 }
 
-function renderCompareAt(hour) {
-  const p = state.cmp; if (!p) return;
-  const t = p.trajectory, n = t.iculos.length, idx = Math.max(0, Math.min(hour - 1, n - 1));
-  $("cmp-hour-label").textContent = hour;
-  const uProb = t.user[idx], tProb = t.tung[idx];
-  const ens = Math.round((p.weight_user * uProb + (1 - p.weight_user) * tProb) * 10) / 10;
-  setReadout("ro-user", uProb, t.user_alarm[idx]);
-  setReadout("ro-tung", tProb, tProb >= p.tung_threshold);
-  setReadout("ro-ens", ens, ens >= p.ensemble_threshold);
-  const septicNow = t.label[idx] === 1;
-  $("ro-truth-state").innerHTML = septicNow
-    ? `<span class="tier-CRITICAL">SEPSIS</span>`
-    : `<span class="tier-LOW">No sepsis</span>`;
-  const op = $("ro-truth-onset");
-  op.textContent = p.true_onset_hour ? `onset @ ICU hour ${p.true_onset_hour}` : "never septic";
-  op.className = "pred-pill " + (septicNow ? "septic" : "");
-  drawChart(idx);
-  $("chart-foot").textContent = `ICU hour ${t.iculos[idx]} · ensemble = ${Math.round(p.weight_user * 100)}% my model + ${Math.round((1 - p.weight_user) * 100)}% Tung`
-    + (p.true_onset_hour ? ` · true onset at ICU hour ${p.true_onset_hour}` : "");
+function renderVitals(vitals) {
+  $("vitals").innerHTML = vitals.map((item) => {
+    const delta = item.delta == null ? "No prior value" : `${item.delta > 0 ? "+" : ""}${item.delta.toFixed(1)} since last measurement`;
+    return `<div class="vital-row ${item.abnormal ? "abnormal" : ""}">
+      <span>${escapeHtml(item.label)}</span><strong>${valueText(item)}</strong><small>${escapeHtml(delta)}</small>
+    </div>`;
+  }).join("");
 }
 
-function setReadout(id, prob, alarm) {
-  $(id + "-prob").textContent = prob == null ? "—" : prob + "%";
-  const pill = $(id + "-alarm");
-  pill.textContent = alarm ? "PREDICTS SEPSIS" : "NO ALARM";
-  pill.className = "pred-pill " + (alarm ? "alarm" : "clear");
+async function loadDetail(patientId) {
+  const requestedHour = state.hour;
+  try {
+    const patient = await getJSON(`/api/twin/beds/${patientId}?hour=${requestedHour}`);
+    if (state.selected !== patientId || requestedHour !== state.hour) return;
+    $("detail-empty").hidden = true;
+    $("detail-content").hidden = false;
+    $("detail-bed").textContent = `${patient.bed} · ICU hour ${patient.hour}`;
+    $("detail-patient").textContent = `Patient ${String(patient.id).padStart(6, "0")}`;
+    $("detail-state").textContent = patient.state;
+    $("detail-state").className = `state-pill state-${patient.state.toLowerCase()}`;
+    setModelReadouts(patient);
+    drawTrajectory(patient.forecast.trajectory);
+    renderDrivers(patient.forecast.drivers);
+    renderVitals(patient.vitals);
+    $("measurement-hour").textContent = `ICU hour ${patient.hour}`;
+    $("observation").textContent = patient.narrative.observation;
+    $("recommendation").textContent = patient.narrative.recommendation;
+    $("narrative-source").textContent = patient.narrative.source.startsWith("openai") ? "LLM" : "Rules fallback";
+  } catch (error) {
+    $("detail-empty").hidden = false;
+    $("detail-content").hidden = true;
+    $("detail-empty").innerHTML = `<strong>Patient detail unavailable</strong><span>${escapeHtml(error.message)}</span>`;
+  }
 }
 
-// ---------- inline SVG line chart ----------
-function drawChart(cursorIdx) {
-  const p = state.cmp, t = p.trajectory;
-  const W = Math.max(560, t.iculos.length * 11), H = 300;
-  const m = { t: 16, r: 16, b: 30, l: 40 };
-  const iw = W - m.l - m.r, ih = H - m.t - m.b;
-  const xs = t.iculos, n = xs.length;
-  const maxY = Math.max(10, Math.ceil(Math.max(...t.user, ...t.tung) / 10) * 10);
-  const X = i => m.l + (n <= 1 ? 0 : (i / (n - 1)) * iw);
-  const Y = v => m.t + ih - (v / maxY) * ih;
-  const path = arr => arr.map((v, i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1)).join(" ");
-  const gy = [];
-  for (let g = 0; g <= maxY; g += Math.max(5, Math.round(maxY / 5 / 5) * 5)) gy.push(g);
-
-  let onsetX = null;
-  if (p.true_onset_hour) { const oi = xs.findIndex(h => h >= p.true_onset_hour); if (oi >= 0) onsetX = X(oi); }
-  const step = Math.max(1, Math.round(n / 8)), xticks = [];
-  for (let i = 0; i < n; i += step) xticks.push(i);
-
-  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Predicted risk over ICU hours">`;
-  gy.forEach(g => { const y = Y(g).toFixed(1); svg += `<line class="grid-line" x1="${m.l}" y1="${y}" x2="${W - m.r}" y2="${y}"/><text x="${m.l - 6}" y="${(+y + 3)}" text-anchor="end">${g}%</text>`; });
-  xticks.forEach(i => { const x = X(i).toFixed(1); svg += `<text x="${x}" y="${H - 10}" text-anchor="middle">${xs[i]}</text>`; });
-  svg += `<line class="axis-line" x1="${m.l}" y1="${m.t + ih}" x2="${W - m.r}" y2="${m.t + ih}"/>`;
-  if (onsetX != null) svg += `<line class="onset-line" x1="${onsetX.toFixed(1)}" y1="${m.t}" x2="${onsetX.toFixed(1)}" y2="${m.t + ih}"/><text x="${onsetX.toFixed(1)}" y="${m.t - 4}" text-anchor="middle" fill="var(--color-critical)" font-weight="700">onset</text>`;
-  const cx = X(cursorIdx).toFixed(1);
-  svg += `<line class="cursor-line" x1="${cx}" y1="${m.t}" x2="${cx}" y2="${m.t + ih}"/>`;
-  svg += `<path class="s-tung" fill="none" stroke-width="2.5" stroke-linejoin="round" d="${path(t.tung)}"/>`;
-  svg += `<path class="s-user" fill="none" stroke-width="2.5" stroke-linejoin="round" d="${path(t.user)}"/>`;
-  svg += `<circle class="dot-tung" cx="${cx}" cy="${Y(t.tung[cursorIdx]).toFixed(1)}" r="5"/>`;
-  svg += `<circle class="dot-user" cx="${cx}" cy="${Y(t.user[cursorIdx]).toFixed(1)}" r="5"/>`;
-  const lx = X(n - 1).toFixed(1);
-  const uHigher = t.user[n - 1] >= t.tung[n - 1];
-  const uY = (Y(t.user[n - 1]) + (uHigher ? -8 : 16)).toFixed(1);
-  const tY = (Y(t.tung[n - 1]) + (uHigher ? 16 : -8)).toFixed(1);
-  svg += `<text class="lbl-user" x="${lx}" y="${uY}" text-anchor="end">My ${t.user[n - 1]}%</text>`;
-  svg += `<text class="lbl-tung" x="${lx}" y="${tY}" text-anchor="end">Tung ${t.tung[n - 1]}%</text>`;
-  svg += `</svg>`;
-  $("chart").innerHTML = svg;
+function setHour(hour) {
+  state.hour = Math.max(1, Math.min(72, hour));
+  $("hour").value = state.hour;
+  $("hour-label").textContent = state.hour;
+  $("ward-hour").textContent = `Hour ${state.hour}`;
+  loadWard();
 }
+
+function startTimer() {
+  clearInterval(state.timer);
+  state.timer = setInterval(() => setHour(state.hour >= 72 ? 1 : state.hour + 1), state.speed);
+}
+
+function togglePlayback() {
+  state.playing = !state.playing;
+  $("play").textContent = state.playing ? "Pause" : "Play";
+  if (state.playing) startTimer(); else clearInterval(state.timer);
+}
+
+$("play").addEventListener("click", togglePlayback);
+$("restart").addEventListener("click", () => setHour(1));
+$("speed").addEventListener("change", (event) => { state.speed = +event.target.value; if (state.playing) startTimer(); });
+$("hour").addEventListener("input", (event) => setHour(+event.target.value));
+
+checkHealth();
+setHour(state.hour);
+startTimer();

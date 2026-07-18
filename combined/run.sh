@@ -1,38 +1,58 @@
 #!/usr/bin/env bash
-# Launch the combined sepsis dashboard: Tung sidecar (dedicated 3.12 venv) + main app (3.10).
-# The two models MUST run in separate processes (LightGBM + XGBoost share-process = OpenMP segfault).
+# Start the two isolated model services behind the unified ICU dashboard.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-PY312="${PY312:-/Users/prathosh/prathosh/bin/python3.12}"   # any Python >=3.11 works
-PY310="${PY310:-python3}"                                    # your framework 3.10 (flask+shap+lightgbm)
-VENV=".venv-tung"
+PYTHON_MAIN="${PYTHON_MAIN:-python3.12}"
+PYTHON_TUNG="${PYTHON_TUNG:-python3.12}"
+MAIN_VENV="${MAIN_VENV:-.venv-main}"
+TUNG_VENV="${TUNG_VENV:-.venv-tung}"
 
-# 1. dedicated Tung venv (Tung needs >=3.11; SHAP needs numpy<2.4; pandas<2.3 to avoid a predict segfault)
-if [ ! -x "$VENV/bin/python" ]; then
-  echo "Creating $VENV ..."
-  "$PY312" -m venv "$VENV"
-  "$VENV/bin/pip" install --quiet --upgrade pip
-  "$VENV/bin/pip" install --quiet -r requirements-tung.txt
+create_venv() {
+  local python="$1" venv="$2" requirements="$3"
+  if [ ! -x "$venv/bin/python" ]; then
+    echo "Creating $venv"
+    "$python" -m venv "$venv"
+    "$venv/bin/pip" install --quiet --upgrade pip
+    "$venv/bin/pip" install --quiet -r "$requirements"
+  fi
+}
+
+create_venv "$PYTHON_MAIN" "$MAIN_VENV" requirements-main.txt
+create_venv "$PYTHON_TUNG" "$TUNG_VENV" requirements-tung.txt
+
+if [ -z "${SEPSIS_DATA_A:-}" ] && [ ! -d "../training_setA" ]; then
+  echo "SEPSIS_DATA_A must point to the directory containing p000001.psv" >&2
+  exit 1
+fi
+if [ -z "${SEPSIS_DATA_B:-}" ] && [ ! -d "../training_setB" ]; then
+  echo "SEPSIS_DATA_B must point to the directory containing the set-B PSV files" >&2
+  exit 1
 fi
 
-# 2. eval artifacts (ensemble weight/threshold/reference quantiles) must exist
-if [ ! -f eval/results/ensemble_config.json ]; then
-  echo "Running the evaluation pipeline (first run) ..."
-  ( cd eval && ../"$VENV/bin/python" score_user.py && ../"$VENV/bin/python" score_tung.py && ../"$VENV/bin/python" evaluate.py )
-fi
+cleanup() {
+  kill "${SIDECAR_PID:-}" "${MAIN_PID:-}" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
 
-# 3. Tung sidecar on :8711
-echo "Starting Tung sidecar on :8711 ..."
-"$VENV/bin/python" app/tung_service.py &
-SIDECAR=$!
-trap 'kill $SIDECAR 2>/dev/null || true' EXIT
-for i in $(seq 1 40); do
-  curl -s http://127.0.0.1:8711/health >/dev/null 2>&1 && break
-  sleep 0.5
+echo "Starting six-hour forecast sidecar on :8711"
+"$TUNG_VENV/bin/python" app/tung_service.py &
+SIDECAR_PID=$!
+for _ in $(seq 1 90); do
+  curl -fsS http://127.0.0.1:8711/health >/dev/null 2>&1 && break
+  kill -0 "$SIDECAR_PID" 2>/dev/null || { echo "Forecast sidecar failed" >&2; exit 1; }
+  sleep 1
 done
-echo "Sidecar ready."
+curl -fsS http://127.0.0.1:8711/health >/dev/null
 
-# 4. main app on :8710 (foreground)
-echo "Open http://127.0.0.1:8710"
-"$PY310" app/combined_app.py
+echo "Starting unified dashboard on :${PORT:-8710}"
+"$MAIN_VENV/bin/python" app/combined_app.py &
+MAIN_PID=$!
+for _ in $(seq 1 60); do
+  curl -fsS "http://127.0.0.1:${PORT:-8710}/api/health" >/dev/null 2>&1 && break
+  kill -0 "$MAIN_PID" 2>/dev/null || { echo "Dashboard service failed" >&2; exit 1; }
+  sleep 1
+done
+
+echo "Open http://127.0.0.1:${PORT:-8710}"
+wait "$MAIN_PID"

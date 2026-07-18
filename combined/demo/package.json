@@ -1,0 +1,11 @@
+{
+  "name": "icu-digital-twin-demo-recorder",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "record": "node record_dashboard.js"
+  },
+  "devDependencies": {
+    "playwright": "1.61.1"
+  }
+}
