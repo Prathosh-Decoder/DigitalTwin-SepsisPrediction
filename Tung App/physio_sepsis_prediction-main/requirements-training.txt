@@ -1,0 +1,2 @@
+-r requirements-inference.txt
+joblib>=1.4,<2

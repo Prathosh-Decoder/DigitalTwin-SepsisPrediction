@@ -1,0 +1,159 @@
+{
+  "artifact": "models/sepsis_next_6h_predictor.pkl",
+  "artifact_bytes": 854285,
+  "artifact_sha256": "18eecf35ab003c73c3d68a9396528c3949698e8e8634b2ba3b72b7311de94604",
+  "model_metadata": {
+    "model_version": "1.0.0",
+    "created_at": "2026-07-16T06:19:11.596355+00:00",
+    "model_type": "XGBoost with sigmoid probability calibration",
+    "feature_set": "literature_core",
+    "feature_count": 310,
+    "training_patients": 40336,
+    "training_hourly_rows_before_sampling": 1552210,
+    "negative_sample_rate_for_model_fit": 0.08,
+    "calibration_source": "five-fold nested out-of-fold patient predictions",
+    "target_definition": "Probability of the PhysioNet Challenge hourly sepsis label, shifted six hours before clinical onset and remaining positive afterward.",
+    "nested_cv_pooled_utility": 0.4262,
+    "nested_cv_utility_ci95": [
+      0.4089,
+      0.4435
+    ],
+    "required_packages": {
+      "python": ">=3.11",
+      "cloudpickle": ">=3.1",
+      "numpy": ">=2.0",
+      "pandas": ">=2.0",
+      "scikit-learn": ">=1.5",
+      "xgboost": ">=3.0"
+    }
+  },
+  "calibration": {
+    "raw_oof": {
+      "auroc": 0.849061,
+      "auprc": 0.126162,
+      "brier_score": 0.044179,
+      "log_loss": 0.174657,
+      "mean_probability": 0.130325,
+      "observed_positive_rate": 0.017985
+    },
+    "cross_fitted_calibrated_oof": {
+      "auroc": 0.84905,
+      "auprc": 0.126006,
+      "brier_score": 0.0166,
+      "log_loss": 0.073372,
+      "mean_probability": 0.01793,
+      "observed_positive_rate": 0.017985
+    }
+  },
+  "deployment_policy": {
+    "global_threshold": 0.023,
+    "phase_bounds": [
+      12,
+      24,
+      48
+    ],
+    "phase_thresholds": [
+      0.025,
+      0.023,
+      0.028,
+      0.023
+    ],
+    "global_oof_metrics_after_policy_tuning": {
+      "auroc": 0.8491,
+      "average_precision": 0.1262,
+      "brier_score": 0.0166,
+      "threshold": null,
+      "precision": 0.0702,
+      "recall": 0.686,
+      "f1": 0.1274,
+      "confusion_matrix": {
+        "tn": 1270724,
+        "fp": 253570,
+        "fn": 8767,
+        "tp": 19149
+      },
+      "positive_rate": 0.017985,
+      "prediction_positive_rate": 0.175697,
+      "lift_at_k": {
+        "top_1pct": {
+          "rows": 15523,
+          "positive_rate": 0.222766,
+          "captured_positives": 3458,
+          "lift": 12.3864
+        },
+        "top_5pct": {
+          "rows": 77611,
+          "positive_rate": 0.134916,
+          "captured_positives": 10471,
+          "lift": 7.5017
+        },
+        "top_10pct": {
+          "rows": 155221,
+          "positive_rate": 0.097074,
+          "captured_positives": 15068,
+          "lift": 5.3976
+        },
+        "top_20pct": {
+          "rows": 310442,
+          "positive_rate": 0.064705,
+          "captured_positives": 20087,
+          "lift": 3.5978
+        }
+      },
+      "policy": "calibrated_global_oof_selected",
+      "utility": 0.4284
+    },
+    "phased_oof_metrics_after_policy_tuning": {
+      "auroc": 0.8491,
+      "average_precision": 0.1262,
+      "brier_score": 0.0166,
+      "threshold": null,
+      "precision": 0.074,
+      "recall": 0.6646,
+      "f1": 0.1332,
+      "confusion_matrix": {
+        "tn": 1292279,
+        "fp": 232015,
+        "fn": 9363,
+        "tp": 18553
+      },
+      "positive_rate": 0.017985,
+      "prediction_positive_rate": 0.161427,
+      "lift_at_k": {
+        "top_1pct": {
+          "rows": 15523,
+          "positive_rate": 0.222766,
+          "captured_positives": 3458,
+          "lift": 12.3864
+        },
+        "top_5pct": {
+          "rows": 77611,
+          "positive_rate": 0.134916,
+          "captured_positives": 10471,
+          "lift": 7.5017
+        },
+        "top_10pct": {
+          "rows": 155221,
+          "positive_rate": 0.097074,
+          "captured_positives": 15068,
+          "lift": 5.3976
+        },
+        "top_20pct": {
+          "rows": 310442,
+          "positive_rate": 0.064705,
+          "captured_positives": 20087,
+          "lift": 3.5978
+        }
+      },
+      "policy": "calibrated_phased_oof_selected",
+      "utility": 0.43
+    }
+  },
+  "nested_cv_reference": {
+    "pooled_utility": 0.4262,
+    "utility_ci95": [
+      0.4089,
+      0.4435
+    ]
+  }
+}

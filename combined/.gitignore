@@ -1,0 +1,4 @@
+.venv-tung/
+__pycache__/
+*.pyc
+eval/results/*.parquet

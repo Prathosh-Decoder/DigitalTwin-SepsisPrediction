@@ -1,0 +1,19 @@
+.DS_Store
+._*
+**/._*
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.venv_*/
+cache/
+
+# Keep only the deployable artifact and its metadata in Git.
+models/*
+!models/sepsis_next_6h_predictor.pkl
+!models/sepsis_next_6h_predictor_metadata.json
+
+# Keep the concise evaluation reports; omit generated plots and experiment dumps.
+output/*
+!output/nested_cv_5fold_report.md
+!output/sepsis_next_6h_predictor_report.md

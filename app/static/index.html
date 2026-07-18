@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sepsis Prediction Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <header class="header">
+            <div class="logo">
+                <h1>ICU Digital Twin</h1>
+                <p>Early Sepsis Warning Monitor</p>
+            </div>
+            
+            <div class="simulation-controls glass-panel">
+                <div class="sim-display">
+                    <span class="sim-label">Simulation Time</span>
+                    <strong id="sim-hour">Hour 1</strong>
+                </div>
+                <div class="sim-actions">
+                    <button id="btn-refresh" class="btn" title="Restart Simulation" style="padding: 0.5rem; font-size: 1.1rem; display: flex; align-items: center; justify-content: center;">↻</button>
+                    <button id="btn-play-pause" class="btn primary">Pause</button>
+                    <select id="speed-selector" class="sim-select">
+                        <option value="350">Very Fast (0.35s = 1hr)</option>
+                        <option value="1000">Fast (1s = 1hr)</option>
+                        <option value="3000" selected>Normal (3s = 1hr)</option>
+                        <option value="5000">Slow (5s = 1hr)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="status-indicator">
+                <span class="dot live"></span>
+                <span>Live Data</span>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <section class="ward-snapshot">
+                <h2>Ward Snapshot</h2>
+                <div class="confusion-matrix-grid">
+                    <div class="category-section">
+                        <h3 class="category-title">True Positives<br><span class="subtitle">Sepsis, Predicted</span></h3>
+                        <div class="beds-grid" id="beds-tp"></div>
+                    </div>
+                    
+                    <div class="category-section">
+                        <h3 class="category-title">False Negatives<br><span class="subtitle">Sepsis, Not Predicted</span></h3>
+                        <div class="beds-grid" id="beds-fn"></div>
+                    </div>
+
+                    <div class="category-section">
+                        <h3 class="category-title">False Positives<br><span class="subtitle">No Sepsis, Predicted</span></h3>
+                        <div class="beds-grid" id="beds-fp"></div>
+                    </div>
+                    
+                    <div class="category-section">
+                        <h3 class="category-title">True Negatives<br><span class="subtitle">No Sepsis, Not Predicted</span></h3>
+                        <div class="beds-grid" id="beds-tn"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="bed-detail glass-panel" id="bed-detail">
+                <div class="empty-state" id="detail-empty">
+                    <h3>Select a bed</h3>
+                    <p>Click on any bed in the ward snapshot to view detailed sepsis predictions and telemetry.</p>
+                </div>
+                <div class="detail-content hidden" id="detail-content">
+                    <div class="detail-header">
+                        <h2 id="detail-title">Patient ID</h2>
+                        <span class="badge" id="detail-tier">Tier</span>
+                    </div>
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <span class="metric-label">Criticality (0-100)</span>
+                            <div class="metric-value">
+                                <span id="detail-criticality">--</span>
+                                <span class="trend-icon" id="detail-trend">→</span>
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Calibrated Risk</span>
+                            <div class="metric-value" id="detail-probability">--%</div>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Alert Status</span>
+                            <div class="metric-value" id="detail-risky">--</div>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Ground Truth</span>
+                            <div class="metric-value" id="detail-truth" style="font-size: 1.25rem;">--</div>
+                        </div>
+                    </div>
+                    
+                    <div class="drivers-section">
+                        <h3>Key Risk Drivers (Top 5)</h3>
+                        
+                        <div class="driver-category">
+                            <h4>Vitals & Labs</h4>
+                            <ul class="drivers-list" id="detail-vitals"></ul>
+                        </div>
+                        
+                        <div class="driver-category">
+                            <h4>Demographics</h4>
+                            <ul class="drivers-list" id="detail-demographics"></ul>
+                        </div>
+                        
+                        <div class="driver-category">
+                            <h4>Others</h4>
+                            <ul class="drivers-list" id="detail-others"></ul>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>

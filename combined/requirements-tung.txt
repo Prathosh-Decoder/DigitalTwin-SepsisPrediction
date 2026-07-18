@@ -1,0 +1,16 @@
+# Dedicated environment for Tung's model + its SHAP (the combined-app sidecar and
+# the offline score_tung.py). Kept separate from your conda base because:
+#   - Tung's pickle needs Python >=3.11 (bytecode-incompatible with your 3.10).
+#   - SHAP's numba dependency needs numpy<2.4 (your base has 2.5), and the base's
+#     numpy 2.5 also segfaults xgboost predict on this model.
+# Create with:  python3.12 -m venv .venv-tung && .venv-tung/bin/pip install -r requirements-tung.txt
+# numpy<2.4 (numba/shap cap); pandas pinned to the stable 2.2 line -- pandas 3.0 segfaults
+# on this numpy in trivial ops (.copy / to_numeric). xgboost/sklearn left to resolve.
+numpy>=2.0,<2.3
+pandas>=2.0,<2.3
+scikit-learn>=1.5
+xgboost>=3.0,<4.0
+cloudpickle>=3.1
+shap>=0.44
+flask>=3.0
+pyarrow>=15
